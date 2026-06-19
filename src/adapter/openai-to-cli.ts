@@ -140,15 +140,9 @@ function extractText(content: string | OpenAIContentBlock[]): string {
     return content;
   }
   if (Array.isArray(content)) {
-    // Render text blocks; surface a visible placeholder for unsupported block
-    // types (e.g. image_url) instead of silently dropping them — the CLI takes a
-    // plain-text prompt over stdin and cannot ingest images.
     return content
-      .map((block) => {
-        const b = block as { type?: string; text?: string };
-        if (b.type === "text" || b.type === "input_text") return b.text ?? "";
-        return `[unsupported content block omitted: ${b.type ?? "unknown"}]`;
-      })
+      .filter((block) => block.type === "text" || block.type === "input_text")
+      .map((block) => block.text)
       .join("\n");
   }
   return String(content || "");
@@ -211,13 +205,6 @@ export function messagesToPrompt(
       case "assistant":
         // Previous assistant responses for context
         parts.push(`<previous_response>\n${text}\n</previous_response>\n`);
-        break;
-
-      case "tool":
-      case "function":
-        // OpenAI tool/function result messages carry prior tool output —
-        // preserve it so multi-turn tool conversations don't lose context.
-        parts.push(`<tool_result>\n${text}\n</tool_result>\n`);
         break;
     }
   }

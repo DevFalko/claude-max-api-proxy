@@ -520,14 +520,7 @@ export async function handleChatCompletions(req: Request, res: Response) {
 }
 ```
 
-### 7. Session Management (removed)
-
-> **Removed.** `session/manager.ts` was never wired into the request path — the
-> proxy runs every call one-shot with `--no-session-persistence`, and the OpenAI
-> `user` field is no longer mapped to `--session-id` (which requires a UUID and
-> crashed on arbitrary identifiers). Tool-call forwarding is likewise
-> intentionally disabled (it caused an agentic loop). The listing below is kept
-> only as historical reference; it no longer ships.
+### 7. Session Management (session/manager.ts)
 
 ```typescript
 import { v4 as uuidv4 } from "uuid";

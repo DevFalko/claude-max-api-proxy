@@ -9,7 +9,7 @@ export interface OpenAIContentBlock {
 }
 
 export interface OpenAIChatMessage {
-  role: "system" | "user" | "assistant" | "tool" | "function";
+  role: "system" | "user" | "assistant";
   content: string | OpenAIContentBlock[];
 }
 
