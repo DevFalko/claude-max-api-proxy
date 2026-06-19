@@ -23,6 +23,12 @@ export interface OpenAIChatRequest {
   frequency_penalty?: number;
   presence_penalty?: number;
   user?: string; // Used for session mapping
+  // Reasoning / extended thinking controls.
+  // `reasoning_effort` is the OpenAI-standard knob (low/medium/high; xhigh/max
+  // are Claude-specific extras the CLI also accepts). `max_thinking_tokens` is
+  // an explicit on/off passthrough: > 0 enables thinking, 0 forces it off.
+  reasoning_effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  max_thinking_tokens?: number;
 }
 
 export interface OpenAIToolCall {
@@ -49,6 +55,9 @@ export interface OpenAIChatResponseChoice {
   message: {
     role: "assistant";
     content: string;
+    // Extended-thinking output, separate from the visible answer
+    // (de-facto standard field used by DeepSeek/OpenRouter/vLLM).
+    reasoning_content?: string;
     tool_calls?: OpenAIToolCall[];
   };
   finish_reason: "stop" | "length" | "content_filter" | null;
@@ -70,6 +79,8 @@ export interface OpenAIChatResponse {
 export interface OpenAIChatChunkDelta {
   role?: "assistant";
   content?: string;
+  // Streamed extended-thinking output (see OpenAIChatResponseChoice.message).
+  reasoning_content?: string;
   tool_calls?: OpenAIToolCallChunk[];
 }
 

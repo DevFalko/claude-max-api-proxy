@@ -1,6 +1,6 @@
 # Claude Max API Proxy
 
-> Actively maintained fork of [atalovesyou/claude-max-api-proxy](https://github.com/atalovesyou/claude-max-api-proxy) with OpenClaw integration, improved streaming, and expanded model support.
+> Actively maintained fork of [atalovesyou/claude-max-api-proxy](https://github.com/atalovesyou/claude-max-api-proxy) with OpenClaw integration, improved streaming, full Anthropic model tunneling, and OpenAI-style reasoning support.
 
 **Use your Claude Max subscription ($200/month) with any OpenAI-compatible client — no separate API costs!**
 
@@ -37,8 +37,9 @@ Your App (OpenClaw, Continue.dev, etc.)
 ## Features
 
 - **OpenAI-compatible API** — Works with any client that supports OpenAI's API format
-- **Streaming support** — Real-time token streaming via Server-Sent Events
-- **Multiple models** — Claude Opus, Sonnet, and Haiku with flexible model aliases
+- **Full Anthropic model tunneling** — Pass through *any* model the CLI accepts (Fable 5, Opus 4.8/4.7/4.6, Sonnet 4.6, Haiku 4.5, …) plus the bare aliases `opus`/`sonnet`/`haiku`/`fable`. New models work without a code change. See [docs/models.md](docs/models.md).
+- **Reasoning / extended thinking** — Set `reasoning_effort` (`low`/`medium`/`high`/`xhigh`/`max`) and the model's thinking is streamed back in a separate `reasoning_content` field (DeepSeek/OpenRouter-style). See [docs/reasoning.md](docs/reasoning.md).
+- **Streaming support** — Real-time token streaming via Server-Sent Events, with reasoning chunks emitted before the answer
 - **OpenClaw integration** — Automatic tool name mapping and system prompt adaptation
 - **Content block handling** — Proper text block separators for multi-block responses
 - **Session management** — Maintains conversation context via session IDs
@@ -48,10 +49,11 @@ Your App (OpenClaw, Continue.dev, etc.)
 
 ## What's Different from the Original
 
+- **Full model passthrough** — The original collapsed every request onto three aliases and defaulted everything to Opus. This fork forwards the exact requested model ID/alias to `--model`, and the response echoes the model you asked for (not an auxiliary internal model). See [docs/models.md](docs/models.md).
+- **Reasoning support** — `reasoning_effort` → the CLI's `--effort` flag; extended-thinking output is surfaced as `reasoning_content`. See [docs/reasoning.md](docs/reasoning.md).
 - **OpenClaw tool mapping** — Maps OpenClaw tool names (`exec`, `read`, `web_search`, etc.) to Claude Code equivalents (`Bash`, `Read`, `WebSearch`)
 - **System prompt stripping** — Removes OpenClaw-specific tooling sections that confuse the CLI
 - **Content block support** — Handles `input_text` content blocks and multi-block text separators
-- **Tool call types** — Full OpenAI tool call type definitions for streaming and non-streaming
 - **Improved streaming** — Better SSE handling with connection confirmation and client disconnect detection
 
 ## Prerequisites
@@ -60,14 +62,15 @@ Your App (OpenClaw, Continue.dev, etc.)
 2. **Claude Code CLI** installed and authenticated:
    ```bash
    npm install -g @anthropic-ai/claude-code
-   claude auth login
+   claude /login   # OAuth via browser (older builds: claude auth login)
    ```
+3. **Node.js ≥ 20**
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/wende/claude-max-api-proxy.git
+# Clone your fork
+git clone https://github.com/<your-account>/claude-max-api-proxy.git
 cd claude-max-api-proxy
 
 # Install dependencies
@@ -106,7 +109,7 @@ curl http://localhost:3456/v1/models
 curl -X POST http://localhost:3456/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-4-6",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 
@@ -114,9 +117,18 @@ curl -X POST http://localhost:3456/v1/chat/completions \
 curl -N -X POST http://localhost:3456/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4",
+    "model": "claude-opus-4-8",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
+  }'
+
+# With reasoning (thinking streamed as reasoning_content, separate from content)
+curl -X POST http://localhost:3456/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "reasoning_effort": "high",
+    "messages": [{"role": "user", "content": "Compute 17*23 two ways; reason it through."}]
   }'
 ```
 
@@ -128,15 +140,42 @@ curl -N -X POST http://localhost:3456/v1/chat/completions \
 | `/v1/models` | GET | List available models |
 | `/v1/chat/completions` | POST | Chat completions (streaming & non-streaming) |
 
+Full request/response field reference (including `reasoning_effort` and `reasoning_content`): [docs/api.md](docs/api.md).
+
 ## Available Models
 
-| Model ID | Alias | CLI Model |
-|----------|-------|-----------|
-| `claude-opus-4` | `opus` | Claude Opus |
-| `claude-sonnet-4` | `sonnet` | Claude Sonnet |
-| `claude-haiku-4` | `haiku` | Claude Haiku |
+The proxy **forwards the requested model verbatim** to the CLI, so any model or alias the Claude Code CLI accepts works — including ones released after this README was written. The list returned by `/v1/models`:
 
-All model IDs also accept a `claude-code-cli/` prefix (e.g., `claude-code-cli/claude-opus-4`). Unknown models default to Opus.
+| Model ID | Tier | Notes |
+|----------|------|-------|
+| `claude-fable-5` | Most capable | Thinking always on |
+| `claude-opus-4-8` | Opus (current) | Default fallback |
+| `claude-opus-4-7` | Opus | |
+| `claude-opus-4-6` | Opus | |
+| `claude-sonnet-4-6` | Sonnet | Balanced |
+| `claude-haiku-4-5` | Haiku | Fastest |
+| `claude-opus-4-5`, `claude-sonnet-4-5` | Legacy | Still active |
+| `opus`, `sonnet`, `haiku`, `fable` | Aliases | Map to the latest of each tier |
+
+A `claude-code-cli/` or `claude-max/` provider prefix is stripped automatically (e.g. `claude-max/claude-sonnet-4-6`). An empty or unrecognized model falls back to `claude-opus-4-8`. Details: [docs/models.md](docs/models.md).
+
+## Reasoning / Extended Thinking
+
+Enable extended thinking per request with the OpenAI-standard `reasoning_effort` field:
+
+```jsonc
+{
+  "model": "claude-sonnet-4-6",
+  "reasoning_effort": "high",        // low | medium | high | xhigh | max
+  "messages": [{ "role": "user", "content": "..." }]
+}
+```
+
+- The thinking text comes back in a **separate `reasoning_content`** field on the message (non-streaming) or delta (streaming) — it is **not** mixed into `content`.
+- In streaming mode, `reasoning_content` chunks arrive **before** the `content` chunks.
+- Omit `reasoning_effort` and thinking is **off** (no `reasoning_content`). You can also force it off with `max_thinking_tokens: 0`.
+
+Whether the model actually thinks is adaptive: trivial prompts may answer directly even at high effort. Full behavior, the effort→`--effort` mapping, and the CLI mechanics: [docs/reasoning.md](docs/reasoning.md).
 
 ## Configuration with Popular Tools
 
@@ -153,7 +192,7 @@ Add to your Continue config:
   "models": [{
     "title": "Claude (Max)",
     "provider": "openai",
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-4-6",
     "apiBase": "http://localhost:3456/v1",
     "apiKey": "not-needed"
   }]
@@ -167,18 +206,23 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:3456/v1",
-    api_key="not-needed"  # Any value works
+    api_key="not-needed",  # Any value works
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4",
-    messages=[{"role": "user", "content": "Hello!"}]
+    model="claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "Hello!"}],
+    extra_body={"reasoning_effort": "high"},  # optional: enable thinking
 )
+
+print(response.choices[0].message.content)
+# Thinking (if enabled) is on response.choices[0].message.reasoning_content
 ```
 
 ## Auto-Start on macOS
 
-The proxy can run as a macOS LaunchAgent on port 3456.
+The proxy can run as a macOS LaunchAgent on port 3456. For a full step-by-step
+plist + install walkthrough, see [docs/macos-setup.md](docs/macos-setup.md).
 
 **Plist location:** `~/Library/LaunchAgents/com.openclaw.claude-max-proxy.plist`
 
@@ -201,42 +245,48 @@ launchctl list com.openclaw.claude-max-proxy
 ```
 src/
 ├── types/
-│   ├── claude-cli.ts      # Claude CLI JSON streaming types + type guards
-│   └── openai.ts          # OpenAI API types (including tool calls)
+│   ├── claude-cli.ts      # Claude CLI JSON streaming types + type guards (incl. thinking events)
+│   └── openai.ts          # OpenAI API types (reasoning_effort, reasoning_content, tool calls)
 ├── adapter/
-│   ├── openai-to-cli.ts   # Convert OpenAI requests → CLI format
-│   └── cli-to-openai.ts   # Convert CLI responses → OpenAI format
+│   ├── openai-to-cli.ts   # OpenAI request → CLI: model passthrough + effort resolution
+│   └── cli-to-openai.ts   # CLI response → OpenAI: echoes requested model
 ├── subprocess/
-│   └── manager.ts         # Claude CLI subprocess + OpenClaw tool mapping
+│   └── manager.ts         # Claude CLI subprocess: --model / --effort, thinking event forwarding
 ├── session/
 │   └── manager.ts         # Session ID mapping
 ├── server/
 │   ├── index.ts           # Express server setup
-│   ├── routes.ts          # API route handlers
+│   ├── routes.ts          # API route handlers (reasoning_content streaming + non-streaming)
 │   └── standalone.ts      # Entry point
 └── index.ts               # Package exports
 ```
+
+See [docs/](docs/) for the API reference, model-tunneling details, and reasoning behavior.
 
 ## Security
 
 - Uses Node.js `spawn()` instead of shell execution to prevent injection attacks
 - No API keys stored or transmitted by this proxy
 - All authentication handled by Claude CLI's secure keychain storage
-- Prompts passed as CLI arguments, not through shell interpretation
+- Prompts are passed to the CLI via **stdin** (not as shell arguments), avoiding both shell interpretation and `E2BIG` on large inputs
 
 ## Troubleshooting
 
-### "Claude CLI not found"
+### "Claude CLI not found" / "Not logged in"
 
 Install and authenticate the CLI:
 ```bash
 npm install -g @anthropic-ai/claude-code
-claude auth login
+claude /login
 ```
+
+### `reasoning_content` is empty even with `reasoning_effort` set
+
+Thinking is adaptive — for trivial prompts the model may answer directly. Try a prompt that genuinely requires reasoning, or a higher effort level. See [docs/reasoning.md](docs/reasoning.md).
 
 ### Streaming returns immediately with no content
 
-Ensure you're using `-N` flag with curl (disables buffering):
+Ensure you're using `-N` with curl (disables buffering):
 ```bash
 curl -N -X POST http://localhost:3456/v1/chat/completions ...
 ```
@@ -250,7 +300,7 @@ which claude
 
 ## Contributing
 
-Contributions welcome! Please submit PRs with tests.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md). Please submit PRs with tests.
 
 ## License
 

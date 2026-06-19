@@ -68,17 +68,26 @@ export function createDoneChunk(requestId: string, model: string): OpenAIChatChu
 export function cliResultToOpenai(
   result: ClaudeCliResult,
   requestId: string,
-  toolCalls?: OpenAIToolCall[]
+  toolCalls?: OpenAIToolCall[],
+  reasoningContent?: string,
+  requestedModel?: string
 ): OpenAIChatResponse {
-  // Get model from modelUsage or default
-  const modelName = result.modelUsage
-    ? Object.keys(result.modelUsage)[0]
-    : "claude-sonnet-4";
+  // Echo the model the client requested. Falling back to modelUsage is unsafe:
+  // Claude Code also bills auxiliary models (e.g. Haiku for internal subtasks),
+  // so modelUsage keys can include a model that isn't the one that served the
+  // turn, and key order is not the main model.
+  const modelName =
+    requestedModel ||
+    (result.modelUsage ? Object.keys(result.modelUsage)[0] : "claude-opus-4-8");
 
   const message: OpenAIChatResponse["choices"][0]["message"] = {
     role: "assistant",
     content: result.result,
   };
+
+  if (reasoningContent) {
+    message.reasoning_content = reasoningContent;
+  }
 
   if (toolCalls && toolCalls.length > 0) {
     message.tool_calls = toolCalls;
@@ -106,13 +115,13 @@ export function cliResultToOpenai(
 }
 
 /**
- * Normalize Claude model names to a consistent format
- * e.g., "claude-sonnet-4-5-20250929" -> "claude-sonnet-4"
+ * Normalize Claude model names returned by the CLI for the OpenAI response.
+ *
+ * The real model ID is preserved so the response reflects the model that
+ * actually served the request. We only strip a trailing date snapshot suffix
+ * (e.g. "claude-sonnet-4-6-20250929" -> "claude-sonnet-4-6").
  */
 function normalizeModelName(model: string | undefined): string {
-  if (!model) return "claude-sonnet-4";
-  if (model.includes("opus")) return "claude-opus-4";
-  if (model.includes("sonnet")) return "claude-sonnet-4";
-  if (model.includes("haiku")) return "claude-haiku-4";
-  return model;
+  if (!model) return "claude-opus-4-8";
+  return model.replace(/-\d{8}$/, "");
 }

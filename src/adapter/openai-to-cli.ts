@@ -4,49 +4,100 @@
 
 import type { OpenAIChatRequest, OpenAIContentBlock } from "../types/openai.js";
 
-export type ClaudeModel = "opus" | "sonnet" | "haiku";
+// A Claude model is just whatever the CLI's `--model` flag accepts: a full
+// model ID (e.g. "claude-opus-4-8") or a bare alias (e.g. "opus", "fable").
+export type ClaudeModel = string;
+
+// Effort levels accepted by `claude --effort`.
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
+const ALLOWED_EFFORTS: ClaudeEffort[] = ["low", "medium", "high", "xhigh", "max"];
 
 export interface CliInput {
   prompt: string;
   model: ClaudeModel;
   sessionId?: string;
+  // Reasoning / extended thinking. In Claude CLI 2.1.x the `--effort` flag
+  // enables and deepens thinking; MAX_THINKING_TOKENS=0 is the only reliable
+  // hard-off switch (a positive value does NOT cap depth — it's a no-op the
+  // current CLI ignores, kept only as a forward-compatible hint).
+  // effort === undefined → thinking disabled.
+  effort?: ClaudeEffort;
+  thinkingBudget?: number;
 }
 
-const MODEL_MAP: Record<string, ClaudeModel> = {
-  // Direct model names (provider prefixes like `claude-code-cli/` and `claude-max/`
-  // are stripped by extractModel before consulting this map)
-  "claude-opus-4": "opus",
-  "claude-opus-4-6": "opus",
-  "claude-sonnet-4": "sonnet",
-  "claude-sonnet-4-5": "sonnet",
-  "claude-sonnet-4-6": "sonnet",
-  "claude-haiku-4": "haiku",
-  "claude-haiku-4-5": "haiku",
-  // Bare aliases
-  "opus": "opus",
-  "sonnet": "sonnet",
-  "haiku": "haiku",
-  "opus-max": "opus",
-  "sonnet-max": "sonnet",
-};
+/**
+ * Known model IDs and aliases. This is the source of truth for the `/v1/models`
+ * listing and for the default fallback — it is NOT a whitelist. Any value the
+ * CLI's `--model` flag accepts is passed through, so future models work without
+ * a code change.
+ */
+export const KNOWN_MODELS = [
+  // Current
+  "claude-fable-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+  // Legacy (still active)
+  "claude-opus-4-5",
+  "claude-sonnet-4-5",
+  // Bare aliases the CLI understands
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+];
+
+const DEFAULT_MODEL = "claude-opus-4-8";
 
 /**
- * Extract Claude model alias from request model string
+ * Resolve the requested model into the value passed to `claude --model`.
+ *
+ * Provider prefixes (`claude-code-cli/`, `claude-max/`) are stripped; the
+ * remainder is passed through verbatim so any current or future model ID/alias
+ * works. Empty/missing input falls back to the default.
  */
 export function extractModel(model: string): ClaudeModel {
-  // Try direct lookup
-  if (MODEL_MAP[model]) {
-    return MODEL_MAP[model];
+  const stripped = (model || "").replace(/^(?:claude-code-cli|claude-max)\//, "").trim();
+  return stripped || DEFAULT_MODEL;
+}
+
+export interface ResolvedThinking {
+  effort?: ClaudeEffort;
+  thinkingBudget?: number;
+}
+
+/**
+ * Resolve the reasoning configuration from an OpenAI request.
+ *
+ * - `reasoning_effort` (low/medium/high/xhigh/max) maps directly to `--effort`.
+ * - `max_thinking_tokens > 0` without an effort level turns thinking on (at
+ *   "high"); the number is carried as a forward-compatible env hint only.
+ * - `max_thinking_tokens === 0` (or negative) forces thinking off, even if an
+ *   effort level was also supplied.
+ * - Nothing set → thinking off.
+ */
+export function resolveThinking(request: OpenAIChatRequest): ResolvedThinking {
+  const mtt = request.max_thinking_tokens;
+  const explicitlyOff = typeof mtt === "number" && mtt <= 0;
+  if (explicitlyOff) return {};
+
+  const budget = typeof mtt === "number" && mtt > 0 ? Math.floor(mtt) : undefined;
+
+  if (request.reasoning_effort) {
+    const effort = (ALLOWED_EFFORTS as string[]).includes(request.reasoning_effort)
+      ? (request.reasoning_effort as ClaudeEffort)
+      : "high";
+    return { effort, thinkingBudget: budget };
   }
 
-  // Try stripping provider prefix
-  const stripped = model.replace(/^(?:claude-code-cli|claude-max)\//, "");
-  if (MODEL_MAP[stripped]) {
-    return MODEL_MAP[stripped];
+  if (budget !== undefined) {
+    // Budget provided without an effort level → enable thinking at high depth.
+    return { effort: "high", thinkingBudget: budget };
   }
 
-  // Default to opus (Claude Max subscription)
-  return "opus";
+  return {};
 }
 
 /**
@@ -136,9 +187,12 @@ export function messagesToPrompt(
  * Convert OpenAI chat request to CLI input format
  */
 export function openaiToCli(request: OpenAIChatRequest): CliInput {
+  const thinking = resolveThinking(request);
   return {
     prompt: messagesToPrompt(request.messages),
     model: extractModel(request.model),
     sessionId: request.user, // Use OpenAI's user field for session mapping
+    effort: thinking.effort,
+    thinkingBudget: thinking.thinkingBudget,
   };
 }

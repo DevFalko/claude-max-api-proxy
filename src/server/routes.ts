@@ -7,13 +7,13 @@
 import type { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { ClaudeSubprocess } from "../subprocess/manager.js";
-import { openaiToCli } from "../adapter/openai-to-cli.js";
+import { openaiToCli, KNOWN_MODELS } from "../adapter/openai-to-cli.js";
 import {
   cliResultToOpenai,
   createDoneChunk,
 } from "../adapter/cli-to-openai.js";
 import type { OpenAIChatRequest, OpenAIToolCall } from "../types/openai.js";
-import type { ClaudeCliAssistant, ClaudeCliResult, ClaudeCliStreamEvent } from "../types/claude-cli.js";
+import type { ClaudeCliResult, ClaudeCliStreamEvent } from "../types/claude-cli.js";
 
 /**
  * Handle POST /v1/chat/completions
@@ -103,7 +103,9 @@ async function handleStreamingResponse(
 
   return new Promise<void>((resolve, reject) => {
     let isFirst = true;
-    let lastModel = "claude-sonnet-4";
+    // Pin the streamed model to the one the client requested — don't derive it
+    // from assistant events, which may carry an auxiliary internal model.
+    const lastModel = cliInput.model;
     let isComplete = false;
     let hasEmittedText = false;
     let toolCallIndex = 0;
@@ -136,6 +138,32 @@ async function handleStreamingResponse(
           }],
         };
         res.write(`data: ${JSON.stringify(sepChunk)}\n\n`);
+      }
+    });
+
+    // Handle streaming extended-thinking deltas → reasoning_content.
+    // Thinking blocks arrive before the visible answer, so these chunks
+    // naturally precede the content chunks.
+    subprocess.on("thinking_delta", (event: ClaudeCliStreamEvent) => {
+      const delta = event.event.delta;
+      const text = (delta?.type === "thinking_delta" && delta.thinking) || "";
+      if (text && !res.writableEnded) {
+        const chunk = {
+          id: `chatcmpl-${requestId}`,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: lastModel,
+          choices: [{
+            index: 0,
+            delta: {
+              role: isFirst ? "assistant" : undefined,
+              reasoning_content: text,
+            },
+            finish_reason: null,
+          }],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        isFirst = false;
       }
     });
 
@@ -235,11 +263,6 @@ async function handleStreamingResponse(
     //   }
     // });
 
-    // Handle final assistant message (for model name)
-    subprocess.on("assistant", (message: ClaudeCliAssistant) => {
-      lastModel = message.message.model;
-    });
-
     subprocess.on("result", (result: ClaudeCliResult) => {
       isComplete = true;
       if (!res.writableEnded) {
@@ -292,6 +315,8 @@ async function handleStreamingResponse(
     subprocess.start(cliInput.prompt, {
       model: cliInput.model,
       sessionId: cliInput.sessionId,
+      effort: cliInput.effort,
+      thinkingBudget: cliInput.thinkingBudget,
     }).catch((err) => {
       console.error("[Streaming] Subprocess start error:", err);
       reject(err);
@@ -310,6 +335,15 @@ async function handleNonStreamingResponse(
 ): Promise<void> {
   return new Promise((resolve) => {
     let finalResult: ClaudeCliResult | null = null;
+    let reasoningContent = "";
+
+    // Accumulate extended-thinking text to return as message.reasoning_content
+    subprocess.on("thinking_delta", (event: ClaudeCliStreamEvent) => {
+      const delta = event.event.delta;
+      if (delta?.type === "thinking_delta" && delta.thinking) {
+        reasoningContent += delta.thinking;
+      }
+    });
     // DISABLED: see tool call forwarding comment in handleStreamingResponse
     // const accumulatedToolCalls: OpenAIToolCall[] = [];
     //
@@ -346,7 +380,15 @@ async function handleNonStreamingResponse(
 
     subprocess.on("close", (code: number | null) => {
       if (finalResult) {
-        res.json(cliResultToOpenai(finalResult, requestId));
+        res.json(
+          cliResultToOpenai(
+            finalResult,
+            requestId,
+            undefined,
+            reasoningContent || undefined,
+            cliInput.model
+          )
+        );
       } else if (!res.headersSent) {
         res.status(500).json({
           error: {
@@ -364,6 +406,8 @@ async function handleNonStreamingResponse(
       .start(cliInput.prompt, {
         model: cliInput.model,
         sessionId: cliInput.sessionId,
+        effort: cliInput.effort,
+        thinkingBudget: cliInput.thinkingBudget,
       })
       .catch((error) => {
         res.status(500).json({
@@ -385,15 +429,7 @@ async function handleNonStreamingResponse(
  */
 export function handleModels(_req: Request, res: Response): void {
   const now = Math.floor(Date.now() / 1000);
-  const modelIds = [
-    "claude-opus-4",
-    "claude-opus-4-6",
-    "claude-sonnet-4",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-6",
-    "claude-haiku-4",
-    "claude-haiku-4-5",
-  ];
+  const modelIds = KNOWN_MODELS;
   res.json({
     object: "list",
     data: modelIds.map((id) => ({
