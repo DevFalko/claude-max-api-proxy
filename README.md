@@ -265,12 +265,35 @@ src/
 
 See [docs/](docs/) for the API reference, model-tunneling details, and reasoning behavior.
 
-## Security
+## Security & configuration
 
-- Uses Node.js `spawn()` instead of shell execution to prevent injection attacks
-- No API keys stored or transmitted by this proxy
-- All authentication handled by Claude CLI's secure keychain storage
-- Prompts are passed to the CLI via **stdin** (not as shell arguments), avoiding both shell interpretation and `E2BIG` on large inputs
+This proxy turns HTTP requests into `claude --dangerously-skip-permissions`
+subprocesses that can run tools (Bash, file edits, web fetch) on the host. Treat
+it as a **local, single-user gateway** and understand the trust boundary:
+
+- **Loopback by default.** The server binds to `127.0.0.1`. Binding to a
+  non-loopback host is refused unless `PROXY_API_KEY` is set — the loopback bind
+  is a load-bearing control.
+- **Optional auth.** Set `PROXY_API_KEY` to require `Authorization: Bearer <key>`
+  (or `x-api-key: <key>`) on `/v1/*`. Unset → open (loopback only).
+- **CORS is opt-in.** No `Access-Control-Allow-Origin` header is sent unless
+  `PROXY_CORS_ORIGIN` is set — this stops a web page you visit from driving the
+  API cross-origin (localhost-CSRF).
+- **Concurrency cap.** At most `PROXY_MAX_CONCURRENCY` (default 8) subprocesses
+  run at once; excess requests get `429`.
+- **Env hygiene.** Common third-party secrets (`AWS_*`, `GH_*`, `OPENAI_*`,
+  `*_TOKEN`, `*_SECRET`, …) are stripped from the subprocess environment;
+  `ANTHROPIC_*`/`CLAUDE_*` are preserved so the CLI can authenticate.
+- Uses `spawn()` (no shell) — request text can't inject shell commands; the
+  prompt is passed via **stdin** (avoids `E2BIG`).
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PROXY_API_KEY` | (unset) | Require this bearer / `x-api-key` token on `/v1/*` |
+| `PROXY_CORS_ORIGIN` | (unset) | Enable CORS for this origin |
+| `PROXY_MAX_CONCURRENCY` | `8` | Max concurrent `claude` subprocesses |
+| `CLAUDE_BIN` | `claude` | Path to the Claude Code CLI |
+| `DEBUG` | (unset) | Verbose request/body logging |
 
 ## Troubleshooting
 

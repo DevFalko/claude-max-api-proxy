@@ -7,8 +7,6 @@
 
 import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
-import fs from "fs/promises";
-import path from "path";
 import type {
   ClaudeCliMessage,
   ClaudeCliAssistant,
@@ -47,6 +45,27 @@ export interface SubprocessEvents {
 }
 
 const DEFAULT_TIMEOUT = 900000; // 15 minutes
+
+/**
+ * Keys whose values are stripped from the spawned CLI's environment to limit
+ * blast radius: the subprocess runs with --dangerously-skip-permissions and can
+ * read its own env, so third-party secrets shouldn't be handed to it.
+ * ANTHROPIC_/CLAUDE_ vars are preserved because the CLI may need them for auth.
+ */
+export function isSensitiveEnvKey(key: string): boolean {
+  if (/^(ANTHROPIC_|CLAUDE_)/i.test(key)) return false;
+  if (
+    /^(AWS_|GH_|GITHUB_|GITLAB_|OPENAI_|GOOGLE_|GCP_|AZURE_|STRIPE_|SLACK_|TWILIO_|SENDGRID_|NPM_TOKEN|HF_|HUGGINGFACE_|DOCKER_|DIGITALOCEAN_|CLOUDFLARE_|VERCEL_|RAILWAY_|SUPABASE_|DATABASE_URL|PROXY_API_KEY)/i.test(
+      key
+    )
+  ) {
+    return true;
+  }
+  if (/(SECRET|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|_TOKEN|API_KEY|APIKEY)$/i.test(key)) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * System prompt appended to Claude CLI to map OpenClaw tool names to Claude Code equivalents.
@@ -112,7 +131,9 @@ export class ClaudeSubprocess extends EventEmitter {
         // buildArgs); MAX_THINKING_TOKENS=0 is the only reliable hard-off switch
         // and overrides --effort, so it's used solely to disable thinking.
         const childEnv: NodeJS.ProcessEnv = Object.fromEntries(
-          Object.entries(process.env).filter(([k]) => k !== "CLAUDECODE")
+          Object.entries(process.env).filter(
+            ([k]) => k !== "CLAUDECODE" && !isSensitiveEnvKey(k)
+          )
         );
         if (options.effort) {
           // Thinking on via --effort. Clear any inherited MAX_THINKING_TOKENS=0

@@ -16,6 +16,31 @@ export interface ServerConfig {
 let serverInstance: Server | null = null;
 
 /**
+ * Optional shared-secret auth. When PROXY_API_KEY is set, every /v1 request must
+ * present it as `Authorization: Bearer <key>` or `x-api-key: <key>`. When unset,
+ * the proxy is open (intended for loopback-only, single-user use).
+ */
+function expectedApiKey(): string | undefined {
+  return process.env.PROXY_API_KEY?.trim() || undefined;
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  const expected = expectedApiKey();
+  if (!expected) return next(); // open mode (loopback default)
+  const authHeader = req.header("authorization") || "";
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const provided = bearer || req.header("x-api-key") || "";
+  if (provided && provided === expected) return next();
+  res.status(401).json({
+    error: {
+      message: "Missing or invalid API key",
+      type: "authentication_error",
+      code: "invalid_api_key",
+    },
+  });
+}
+
+/**
  * Create and configure the Express app
  */
 function createApp(): Express {
@@ -57,23 +82,28 @@ function createApp(): Express {
     next();
   });
 
-  // CORS headers for local development
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    next();
-  });
+  // CORS is opt-in. A wildcard `Access-Control-Allow-Origin: *` would let any web
+  // page the operator visits drive this API cross-origin (localhost-CSRF), which
+  // is dangerous since requests spawn Claude with --dangerously-skip-permissions.
+  // OpenAI-compatible clients are server-side and don't need CORS; set
+  // PROXY_CORS_ORIGIN only if a browser client must reach the proxy.
+  const corsOrigin = process.env.PROXY_CORS_ORIGIN?.trim();
+  if (corsOrigin) {
+    app.use((_req: Request, res: Response, next: NextFunction) => {
+      res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key");
+      next();
+    });
+    app.options("*", (_req: Request, res: Response) => {
+      res.sendStatus(200);
+    });
+  }
 
-  // Handle OPTIONS preflight
-  app.options("*", (_req: Request, res: Response) => {
-    res.sendStatus(200);
-  });
-
-  // Routes
+  // Routes (health stays open; /v1 is gated by optional auth)
   app.get("/health", handleHealth);
-  app.get("/v1/models", handleModels);
-  app.post("/v1/chat/completions", handleChatCompletions);
+  app.get("/v1/models", requireAuth, handleModels);
+  app.post("/v1/chat/completions", requireAuth, handleChatCompletions);
 
   // 404 handler
   app.use((_req: Request, res: Response) => {
@@ -106,6 +136,17 @@ function createApp(): Express {
  */
 export async function startServer(config: ServerConfig): Promise<Server> {
   const { port, host = "127.0.0.1" } = config;
+
+  // The loopback bind is a load-bearing security control: the proxy runs Claude
+  // with --dangerously-skip-permissions and no auth by default. Refuse to expose
+  // it on a non-loopback interface unless an API key is configured.
+  const isLoopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if (!isLoopback && !expectedApiKey()) {
+    throw new Error(
+      `Refusing to bind to non-loopback host "${host}" without PROXY_API_KEY set. ` +
+        "The proxy executes tools on the host; set PROXY_API_KEY before exposing it."
+    );
+  }
 
   if (serverInstance) {
     console.log("[Server] Already running, returning existing instance");
