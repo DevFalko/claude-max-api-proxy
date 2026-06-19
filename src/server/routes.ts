@@ -13,8 +13,17 @@ import {
   createDoneChunk,
   normalizeModelName,
 } from "../adapter/cli-to-openai.js";
-import type { OpenAIChatRequest, OpenAIToolCall } from "../types/openai.js";
+import type { OpenAIChatRequest } from "../types/openai.js";
 import type { ClaudeCliResult, ClaudeCliStreamEvent } from "../types/claude-cli.js";
+
+// Cap concurrent Claude subprocesses to avoid resource-exhaustion DoS. Each
+// request spawns a heavyweight `claude` process; without a ceiling a burst of
+// requests can exhaust CPU/RAM/FDs and the operator's budget.
+const MAX_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.PROXY_MAX_CONCURRENCY || "8", 10) || 8
+);
+let inFlight = 0;
 
 /**
  * Handle POST /v1/chat/completions
@@ -42,14 +51,31 @@ export async function handleChatCompletions(
       return;
     }
 
+    // Bound concurrent subprocesses (resource-exhaustion DoS guard).
+    if (inFlight >= MAX_CONCURRENCY) {
+      res.status(429).json({
+        error: {
+          message: `Too many concurrent requests (max ${MAX_CONCURRENCY})`,
+          type: "rate_limit_error",
+          code: "concurrency_limit",
+        },
+      });
+      return;
+    }
+
     // Convert to CLI input format
     const cliInput = openaiToCli(body);
     const subprocess = new ClaudeSubprocess();
 
-    if (stream) {
-      await handleStreamingResponse(req, res, subprocess, cliInput, requestId);
-    } else {
-      await handleNonStreamingResponse(res, subprocess, cliInput, requestId);
+    inFlight++;
+    try {
+      if (stream) {
+        await handleStreamingResponse(req, res, subprocess, cliInput, requestId);
+      } else {
+        await handleNonStreamingResponse(res, subprocess, cliInput, requestId);
+      }
+    } finally {
+      inFlight--;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -65,14 +91,6 @@ export async function handleChatCompletions(
       });
     }
   }
-}
-
-/**
- * Convert Claude tool_use ID to OpenAI-compatible call ID.
- * Claude uses "toolu_abc123", OpenAI uses "call_abc123".
- */
-function toOpenAICallId(claudeId: string): string {
-  return `call_${claudeId.replace("toolu_", "")}`;
 }
 
 /**
@@ -111,8 +129,6 @@ async function handleStreamingResponse(
     const lastModel = normalizeModelName(cliInput.model);
     let isComplete = false;
     let hasEmittedText = false;
-    let toolCallIndex = 0;
-    let inToolBlock = false;
 
     // Handle actual client disconnect (response stream closed)
     res.on("close", () => {
@@ -197,77 +213,6 @@ async function handleStreamingResponse(
       }
     });
 
-    // DISABLED: Tool call forwarding causes an agentic loop — OpenClaw interprets
-    // Claude Code's internal tool_use (Read, Bash, etc.) as calls it needs to
-    // handle, triggering repeated requests. Claude Code handles tools internally
-    // via --print mode; only the final text result should be forwarded.
-    // TODO: Re-enable with a non-tool_calls display mechanism (e.g. inline text).
-    //
-    // subprocess.on("tool_use_start", (event: ClaudeCliStreamEvent) => {
-    //   if (res.writableEnded) return;
-    //   const block = event.event.content_block;
-    //   if (block?.type !== "tool_use") return;
-    //
-    //   inToolBlock = true;
-    //   const chunk = {
-    //     id: `chatcmpl-${requestId}`,
-    //     object: "chat.completion.chunk",
-    //     created: Math.floor(Date.now() / 1000),
-    //     model: lastModel,
-    //     choices: [{
-    //       index: 0,
-    //       delta: {
-    //         role: isFirst ? "assistant" : undefined,
-    //         tool_calls: [{
-    //           index: toolCallIndex,
-    //           id: toOpenAICallId(block.id),
-    //           type: "function" as const,
-    //           function: {
-    //             name: block.name,
-    //             arguments: "",
-    //           },
-    //         }],
-    //       },
-    //       finish_reason: null,
-    //     }],
-    //   };
-    //   res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-    //   isFirst = false;
-    // });
-    //
-    // subprocess.on("input_json_delta", (event: ClaudeCliStreamEvent) => {
-    //   if (res.writableEnded) return;
-    //   const delta = event.event.delta;
-    //   if (delta?.type !== "input_json_delta") return;
-    //
-    //   const chunk = {
-    //     id: `chatcmpl-${requestId}`,
-    //     object: "chat.completion.chunk",
-    //     created: Math.floor(Date.now() / 1000),
-    //     model: lastModel,
-    //     choices: [{
-    //       index: 0,
-    //       delta: {
-    //         tool_calls: [{
-    //           index: toolCallIndex,
-    //           function: {
-    //             arguments: delta.partial_json,
-    //           },
-    //         }],
-    //       },
-    //       finish_reason: null,
-    //     }],
-    //   };
-    //   res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-    // });
-    //
-    // subprocess.on("content_block_stop", () => {
-    //   if (inToolBlock) {
-    //     toolCallIndex++;
-    //     inToolBlock = false;
-    //   }
-    // });
-
     subprocess.on("result", (result: ClaudeCliResult) => {
       isComplete = true;
       if (!res.writableEnded) {
@@ -296,6 +241,8 @@ async function handleStreamingResponse(
             error: { message: error.message, type: "server_error", code: null },
           })}\n\n`
         );
+        // Always close the SSE stream with the [DONE] sentinel, even on error.
+        res.write("data: [DONE]\n\n");
         res.end();
       }
       resolve();
@@ -356,24 +303,6 @@ async function handleNonStreamingResponse(
         reasoningContent += delta.thinking;
       }
     });
-    // DISABLED: see tool call forwarding comment in handleStreamingResponse
-    // const accumulatedToolCalls: OpenAIToolCall[] = [];
-    //
-    // subprocess.on("assistant", (message: ClaudeCliAssistant) => {
-    //   for (const block of message.message.content) {
-    //     if (block.type === "tool_use") {
-    //       accumulatedToolCalls.push({
-    //         id: toOpenAICallId(block.id),
-    //         type: "function",
-    //         function: {
-    //           name: block.name,
-    //           arguments: JSON.stringify(block.input),
-    //         },
-    //       });
-    //     }
-    //   }
-    // });
-
     subprocess.on("result", (result: ClaudeCliResult) => {
       finalResult = result;
     });
