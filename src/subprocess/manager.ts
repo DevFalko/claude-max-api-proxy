@@ -23,20 +23,24 @@ import {
   isToolUseBlockStart,
   isInputJsonDelta,
   isContentBlockStop,
+  isThinkingDelta,
 } from "../types/claude-cli.js";
-import type { ClaudeModel } from "../adapter/openai-to-cli.js";
+import type { ClaudeModel, ClaudeEffort } from "../adapter/openai-to-cli.js";
 
 export interface SubprocessOptions {
   model: ClaudeModel;
-  sessionId?: string;
   cwd?: string;
   timeout?: number;
+  // Reasoning config. `effort` (passed as `--effort`) enables/deepens thinking;
+  // undefined → thinking hard-disabled via MAX_THINKING_TOKENS=0.
+  effort?: ClaudeEffort;
 }
 
 export interface SubprocessEvents {
   message: (msg: ClaudeCliMessage) => void;
   assistant: (msg: ClaudeCliAssistant) => void;
   result: (result: ClaudeCliResult) => void;
+  thinking_delta: (event: ClaudeCliStreamEvent) => void;
   error: (error: Error) => void;
   close: (code: number | null) => void;
   raw: (line: string) => void;
@@ -103,12 +107,26 @@ export class ClaudeSubprocess extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       try {
+        // Build the child env: inherit ours (minus CLAUDECODE), then control
+        // extended thinking. The activation lever is the `--effort` flag (set in
+        // buildArgs); MAX_THINKING_TOKENS=0 is the only reliable hard-off switch
+        // and overrides --effort, so it's used solely to disable thinking.
+        const childEnv: NodeJS.ProcessEnv = Object.fromEntries(
+          Object.entries(process.env).filter(([k]) => k !== "CLAUDECODE")
+        );
+        if (options.effort) {
+          // Thinking on via --effort. Clear any inherited MAX_THINKING_TOKENS=0
+          // that would otherwise force thinking off.
+          delete childEnv.MAX_THINKING_TOKENS;
+        } else {
+          // No reasoning requested → deterministically disable thinking.
+          childEnv.MAX_THINKING_TOKENS = "0";
+        }
+
         // Use spawn() for security - no shell interpretation
         this.process = spawn(process.env.CLAUDE_BIN || "claude", args, {
           cwd: options.cwd || process.cwd(),
-          env: Object.fromEntries(
-            Object.entries(process.env).filter(([k]) => k !== "CLAUDECODE")
-          ),
+          env: childEnv,
           stdio: ["pipe", "pipe", "pipe"],
         });
 
@@ -206,8 +224,10 @@ export class ClaudeSubprocess extends EventEmitter {
       // Prompt is passed via stdin (avoids E2BIG on large inputs)
     ];
 
-    if (options.sessionId) {
-      args.push("--session-id", options.sessionId);
+    // Enable / deepen extended thinking. Omitting --effort leaves thinking off
+    // (further enforced by MAX_THINKING_TOKENS=0 in the spawn env).
+    if (options.effort) {
+      args.push("--effort", options.effort);
     }
 
     return args;
@@ -243,6 +263,11 @@ export class ClaudeSubprocess extends EventEmitter {
 
         if (isContentBlockStop(message)) {
           this.emit("content_block_stop", message as ClaudeCliStreamEvent);
+        }
+
+        if (isThinkingDelta(message)) {
+          // Emit extended-thinking delta for streaming (signature_delta is ignored)
+          this.emit("thinking_delta", message as ClaudeCliStreamEvent);
         }
 
         if (isContentDelta(message)) {

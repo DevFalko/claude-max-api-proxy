@@ -7,39 +7,38 @@
 
 import { startServer, stopServer, getServer } from "./server/index.js";
 import { verifyClaude, verifyAuth } from "./subprocess/manager.js";
+import { KNOWN_MODELS, modelLimitsFor } from "./adapter/openai-to-cli.js";
 
 // Provider constants
 const PROVIDER_ID = "claude-code-cli";
 const PROVIDER_LABEL = "Claude Code CLI";
 const DEFAULT_PORT = 3456;
-const DEFAULT_MODEL = "claude-code-cli/claude-sonnet-4";
+const DEFAULT_MODEL = `${PROVIDER_ID}/claude-opus-4-8`;
 
-// Available models
-const AVAILABLE_MODELS = [
-  {
-    id: "claude-opus-4",
-    name: "Claude Opus 4.5",
-    alias: "opus",
-    reasoning: true,
-  },
-  {
-    id: "claude-sonnet-4",
-    name: "Claude Sonnet 4",
-    alias: "sonnet",
-    reasoning: false,
-  },
-  {
-    id: "claude-haiku-4",
-    name: "Claude Haiku 4",
-    alias: "haiku",
-    reasoning: false,
-  },
-];
+// Friendly display names for advertised models (fallback: the id itself).
+const MODEL_NAMES: Record<string, string> = {
+  "claude-fable-5": "Claude Fable 5",
+  "claude-opus-4-8": "Claude Opus 4.8",
+  "claude-opus-4-7": "Claude Opus 4.7",
+  "claude-opus-4-6": "Claude Opus 4.6",
+  "claude-sonnet-4-6": "Claude Sonnet 4.6",
+  "claude-haiku-4-5": "Claude Haiku 4.5",
+  "claude-opus-4-5": "Claude Opus 4.5",
+  "claude-sonnet-4-5": "Claude Sonnet 4.5",
+};
+
+// Advertise the concrete model IDs (not the bare aliases) from the single
+// source of truth, so the plugin stays in sync with /v1/models and the adapter.
+// Every model supports reasoning via reasoning_effort → --effort.
+const AVAILABLE_MODELS = KNOWN_MODELS.filter((id) => id.startsWith("claude-")).map(
+  (id) => ({ id, name: MODEL_NAMES[id] ?? id, reasoning: true })
+);
 
 /**
- * Build model definitions for Clawdbot config
+ * Build model definitions for Clawdbot config (limits from MODEL_LIMITS).
  */
 function buildModelDefinition(model: (typeof AVAILABLE_MODELS)[number]) {
+  const limits = modelLimitsFor(model.id);
   return {
     id: model.id,
     name: model.name,
@@ -47,8 +46,8 @@ function buildModelDefinition(model: (typeof AVAILABLE_MODELS)[number]) {
     reasoning: model.reasoning,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
-    maxTokens: 8192,
+    contextWindow: limits.contextLength,
+    maxTokens: limits.maxOutputTokens,
   };
 }
 

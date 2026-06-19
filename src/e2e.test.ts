@@ -47,7 +47,7 @@ describe("health and models", () => {
     assert.ok(body.timestamp);
   });
 
-  it("GET /v1/models lists all model IDs", async () => {
+  it("GET /v1/models lists current model IDs with per-model limits", async () => {
     const res = await fetch(`${baseUrl}/v1/models`);
     assert.equal(res.status, 200);
     const body = await res.json() as any;
@@ -56,13 +56,16 @@ describe("health and models", () => {
 
     const ids = body.data.map((m: any) => m.id);
     for (const expected of [
-      "claude-opus-4",
+      "claude-fable-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
       "claude-opus-4-6",
-      "claude-sonnet-4",
-      "claude-sonnet-4-5",
       "claude-sonnet-4-6",
-      "claude-haiku-4",
       "claude-haiku-4-5",
+      "opus",
+      "sonnet",
+      "haiku",
+      "fable",
     ]) {
       assert.ok(ids.includes(expected), `missing model ${expected}`);
     }
@@ -71,6 +74,15 @@ describe("health and models", () => {
       assert.equal(model.object, "model");
       assert.equal(model.owned_by, "anthropic");
       assert.ok(typeof model.created === "number");
+      // Per-model limits so clients can size their context budget.
+      assert.ok(
+        typeof model.context_length === "number" && model.context_length > 0,
+        `model ${model.id} missing context_length`
+      );
+      assert.ok(
+        typeof model.max_output_tokens === "number" && model.max_output_tokens > 0,
+        `model ${model.id} missing max_output_tokens`
+      );
     }
   });
 
@@ -100,7 +112,7 @@ describe("non-streaming completion", { timeout: TEST_TIMEOUT }, () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-haiku-4",
+        model: "haiku",
         stream: false,
         messages: [
           {
@@ -159,6 +171,24 @@ describe("non-streaming completion", { timeout: TEST_TIMEOUT }, () => {
     const body = await res.json() as any;
     assert.ok(body.choices[0].message.content.length > 0);
   });
+
+  it("accepts a non-UUID `user` field without crashing", async () => {
+    // Regression: `user` used to be forwarded to --session-id (which requires a
+    // UUID), crashing every request from clients that set it.
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "haiku",
+        stream: false,
+        user: "telegram-12345",
+        messages: [{ role: "user", content: "Reply with exactly 'ok'." }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.ok(body.choices[0].message.content.length > 0);
+  });
 });
 
 // ─── Streaming completion ───────────────────────────────────────────
@@ -169,7 +199,7 @@ describe("streaming completion", { timeout: TEST_TIMEOUT }, () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-haiku-4",
+        model: "haiku",
         stream: true,
         messages: [
           {
@@ -237,5 +267,81 @@ describe("streaming completion", { timeout: TEST_TIMEOUT }, () => {
       .map((c) => c.choices[0].delta.content || "")
       .join("");
     assert.ok(fullText.length > 0, "streamed text should be non-empty");
+  });
+});
+
+// ─── Reasoning / extended thinking ──────────────────────────────────
+
+describe("reasoning", { timeout: TEST_TIMEOUT }, () => {
+  const REASONING_PROMPT =
+    "Think about computing 17*23 using two methods (distribution and rounding); reason through both, then give the answer.";
+
+  it("non-streaming returns reasoning_content alongside content", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        reasoning_effort: "high",
+        stream: false,
+        messages: [{ role: "user", content: REASONING_PROMPT }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    const msg = body.choices[0].message;
+    assert.ok(typeof msg.content === "string" && msg.content.length > 0, "missing content");
+    assert.ok(
+      typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0,
+      "expected reasoning_content with reasoning_effort set"
+    );
+  });
+
+  it("streaming emits reasoning_content before content", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        reasoning_effort: "high",
+        stream: true,
+        messages: [{ role: "user", content: REASONING_PROMPT }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const fields: string[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+      const j = JSON.parse(line.slice(6));
+      const d = j.choices?.[0]?.delta;
+      if (!d) continue;
+      if (typeof d.reasoning_content === "string" && d.reasoning_content) fields.push("reasoning");
+      if (typeof d.content === "string" && d.content) fields.push("content");
+    }
+    const firstReason = fields.indexOf("reasoning");
+    const firstContent = fields.indexOf("content");
+    assert.ok(firstReason >= 0, "expected reasoning_content chunks");
+    assert.ok(firstContent >= 0, "expected content chunks");
+    assert.ok(firstReason < firstContent, "reasoning_content must precede content");
+  });
+
+  it("omitting reasoning_effort yields no reasoning_content (thinking off)", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "haiku",
+        stream: false,
+        messages: [{ role: "user", content: REASONING_PROMPT }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(
+      body.choices[0].message.reasoning_content,
+      undefined,
+      "reasoning_content should be absent when reasoning is off"
+    );
   });
 });

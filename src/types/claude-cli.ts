@@ -41,6 +41,12 @@ export interface ClaudeCliTextContent {
   text: string;
 }
 
+export interface ClaudeCliThinkingContent {
+  type: "thinking";
+  thinking: string;
+  signature?: string;
+}
+
 export interface ClaudeCliToolUseContent {
   type: "tool_use";
   id: string;
@@ -48,7 +54,10 @@ export interface ClaudeCliToolUseContent {
   input: Record<string, unknown>;
 }
 
-export type ClaudeCliAssistantContent = ClaudeCliTextContent | ClaudeCliToolUseContent;
+export type ClaudeCliAssistantContent =
+  | ClaudeCliTextContent
+  | ClaudeCliThinkingContent
+  | ClaudeCliToolUseContent;
 
 export interface ClaudeCliAssistant {
   type: "assistant";
@@ -110,10 +119,19 @@ export interface ClaudeCliStreamEvent {
     } | {
       type: "input_json_delta";
       partial_json: string;
+    } | {
+      type: "thinking_delta";
+      thinking: string;
+    } | {
+      type: "signature_delta";
+      signature: string;
     };
     content_block?: {
       type: "text";
       text: string;
+    } | {
+      type: "thinking";
+      thinking: string;
     } | {
       type: "tool_use";
       id: string;
@@ -161,6 +179,14 @@ export function isContentDelta(msg: ClaudeCliMessage): msg is ClaudeCliStreamEve
     isStreamEvent(msg) &&
     msg.event.type === "content_block_delta" &&
     msg.event.delta?.type === "text_delta"
+  );
+}
+
+export function isThinkingDelta(msg: ClaudeCliMessage): msg is ClaudeCliStreamEvent {
+  return (
+    isStreamEvent(msg) &&
+    msg.event.type === "content_block_delta" &&
+    msg.event.delta?.type === "thinking_delta"
   );
 }
 
