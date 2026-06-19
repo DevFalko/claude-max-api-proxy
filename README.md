@@ -66,19 +66,46 @@ Your App (OpenClaw, Continue.dev, etc.)
    ```
 3. **Node.js ≥ 20**
 
-## Installation
+## Build from source
+
+Requires **Node.js ≥ 20** and an authenticated **Claude Code CLI** (see [Prerequisites](#prerequisites)).
 
 ```bash
-# Clone your fork
+# 1. Clone
 git clone https://github.com/<your-account>/claude-max-api-proxy.git
 cd claude-max-api-proxy
 
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-# Build
+# 3. Compile TypeScript → dist/
 npm run build
+
+# 4. (optional) Run the tests. Unit tests are free; the e2e tests hit the real
+#    Claude CLI and burn a few tokens.
+npm test
 ```
+
+The compiled output lands in `dist/`; the server entry point is
+`dist/server/standalone.js`. Installing globally (`npm install -g .` or
+`npm link`) also exposes it as the `claude-max-api` command.
+
+### Quick manual test
+
+```bash
+# Start the server (foreground)
+node dist/server/standalone.js 3456
+
+# …then in another shell:
+curl http://127.0.0.1:3456/health
+curl http://127.0.0.1:3456/v1/models | jq '.data[].id'
+curl -s http://127.0.0.1:3456/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"haiku","messages":[{"role":"user","content":"Reply with exactly: pong"}]}' | jq '.choices[0].message.content'
+```
+
+On startup the server verifies that the Claude CLI is installed and
+authenticated; if it prints `Not logged in`, run `claude /login` first.
 
 ## Usage
 
@@ -220,6 +247,75 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 # Thinking (if enabled) is on response.choices[0].message.reasoning_content
 ```
+
+## Run as a Linux service (systemd)
+
+Run the proxy as a **user** service so it can read your Claude Code credentials
+in `~/.claude` — a system service running as `root` or another user would not be
+authenticated.
+
+1. Find the absolute paths you'll need:
+
+   ```bash
+   which node     # → ExecStart (e.g. /usr/bin/node)
+   which claude   # its directory must be on the service's PATH
+   pwd            # repo root → WorkingDirectory
+   ```
+
+2. Create `~/.config/systemd/user/claude-max-proxy.service` (substitute your
+   paths; `%h` expands to your home directory):
+
+   ```ini
+   [Unit]
+   Description=Claude Max API Proxy (OpenAI-compatible)
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   WorkingDirectory=%h/path/to/claude-max-api-proxy
+   ExecStart=/usr/bin/node %h/path/to/claude-max-api-proxy/dist/server/standalone.js 3456
+   # PATH must include the directory containing `claude` (and node):
+   Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+   # Optional: pin a specific CLI binary
+   # Environment=CLAUDE_BIN=%h/.local/bin/claude
+   Restart=on-failure
+   RestartSec=5
+   StandardOutput=append:%h/.claude-max-proxy/proxy.log
+   StandardError=append:%h/.claude-max-proxy/proxy.err.log
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+3. Enable and start it:
+
+   ```bash
+   mkdir -p ~/.claude-max-proxy
+   systemctl --user daemon-reload
+   systemctl --user enable --now claude-max-proxy.service
+
+   # Keep it running after logout / start it at boot without a login session:
+   loginctl enable-linger "$USER"
+   ```
+
+4. Manage it:
+
+   ```bash
+   systemctl --user status  claude-max-proxy.service
+   journalctl  --user -u    claude-max-proxy.service -f   # live logs
+   systemctl --user restart claude-max-proxy.service
+   systemctl --user stop    claude-max-proxy.service
+   systemctl --user disable --now claude-max-proxy.service   # remove
+   ```
+
+5. Verify it's serving: `curl http://127.0.0.1:3456/health`.
+
+> **WSL:** enable systemd first — add `[boot]\nsystemd=true` to `/etc/wsl.conf`,
+> then run `wsl --shutdown` from Windows and reopen the distro.
+>
+> The server binds to `127.0.0.1` (loopback) by default. Keep it that way unless
+> you put an authenticating reverse proxy in front of it.
 
 ## Auto-Start on macOS
 
