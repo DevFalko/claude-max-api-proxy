@@ -21,21 +21,33 @@ strings all flow straight to the CLI.
 `KNOWN_MODELS` is the source of truth for the `/v1/models` listing and the default
 fallback. It is **not** a whitelist — unlisted models still work.
 
-| Model ID | Tier |
-|----------|------|
-| `claude-fable-5` | Most capable (thinking always on) |
-| `claude-opus-4-8` | Opus (current, default fallback) |
-| `claude-opus-4-7` | Opus |
-| `claude-opus-4-6` | Opus |
-| `claude-sonnet-4-6` | Sonnet (balanced) |
-| `claude-haiku-4-5` | Haiku (fastest) |
-| `claude-opus-4-5` | Opus (legacy, active) |
-| `claude-sonnet-4-5` | Sonnet (legacy, active) |
-| `opus` / `sonnet` / `haiku` / `fable` | Aliases → latest of each tier |
+Each listed model also carries its limits so clients (OpenClaw, etc.) can size
+their context budget per model — `context_length` (input window) and
+`max_output_tokens`:
 
-To add a model to the listing, edit `KNOWN_MODELS` in
+| Model ID | Tier | `context_length` | `max_output_tokens` |
+|----------|------|-----------------:|--------------------:|
+| `claude-fable-5` | Most capable (thinking always on) | 1,000,000 | 128,000 |
+| `claude-opus-4-8` | Opus (current, default fallback) | 1,000,000 | 128,000 |
+| `claude-opus-4-7` | Opus | 1,000,000 | 128,000 |
+| `claude-opus-4-6` | Opus | 1,000,000 | 128,000 |
+| `claude-sonnet-4-6` | Sonnet (balanced) | 1,000,000 | 64,000 |
+| `claude-haiku-4-5` | Haiku (fastest) | 200,000 | 64,000 |
+| `claude-opus-4-5` | Opus (legacy, active) | 200,000 | 64,000 |
+| `claude-sonnet-4-5` | Sonnet (legacy, active) | 1,000,000 | 64,000 |
+| `opus` / `sonnet` / `haiku` / `fable` | Aliases → latest of each tier | (same as target) | (same as target) |
+
+These are the models' published context windows; the CLI manages compaction
+within whatever the subscription actually grants. To add a model or adjust the
+advertised limits, edit `KNOWN_MODELS` / `MODEL_LIMITS` in
 [`src/adapter/openai-to-cli.ts`](../src/adapter/openai-to-cli.ts). To *use* a new
-model you don't need to change anything — just request it.
+model you don't need to change anything — just request it (it gets the
+conservative default limits if not listed).
+
+> Note: the Claude Code CLI cannot raise the actual input context window per
+> request for subscription/OAuth users (`--betas` is API-key-only, and there is
+> no `--max-tokens` flag), so these values are advertised **metadata**, not a
+> per-request override.
 
 ## Response model echoes the request
 

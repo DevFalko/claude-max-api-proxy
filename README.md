@@ -157,7 +157,9 @@ The proxy **forwards the requested model verbatim** to the CLI, so any model or 
 | `claude-opus-4-5`, `claude-sonnet-4-5` | Legacy | Still active |
 | `opus`, `sonnet`, `haiku`, `fable` | Aliases | Map to the latest of each tier |
 
-A `claude-code-cli/` or `claude-max/` provider prefix is stripped automatically (e.g. `claude-max/claude-sonnet-4-6`). An empty or unrecognized model falls back to `claude-opus-4-8`. Details: [docs/models.md](docs/models.md).
+A `claude-code-cli/` or `claude-max/` provider prefix is stripped automatically (e.g. `claude-max/claude-sonnet-4-6`). An empty or unrecognized model falls back to `claude-opus-4-8`.
+
+`/v1/models` also reports each model's `context_length` (input window: 1M for Opus/Sonnet/Fable, 200K for Haiku) and `max_output_tokens`, so OpenClaw and other clients can size their context budget per model. Details: [docs/models.md](docs/models.md).
 
 ## Reasoning / Extended Thinking
 

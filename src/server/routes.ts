@@ -7,7 +7,7 @@
 import type { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { ClaudeSubprocess } from "../subprocess/manager.js";
-import { openaiToCli, KNOWN_MODELS } from "../adapter/openai-to-cli.js";
+import { openaiToCli, KNOWN_MODELS, modelLimitsFor } from "../adapter/openai-to-cli.js";
 import {
   cliResultToOpenai,
   createDoneChunk,
@@ -429,15 +429,20 @@ async function handleNonStreamingResponse(
  */
 export function handleModels(_req: Request, res: Response): void {
   const now = Math.floor(Date.now() / 1000);
-  const modelIds = KNOWN_MODELS;
   res.json({
     object: "list",
-    data: modelIds.map((id) => ({
-      id,
-      object: "model",
-      owned_by: "anthropic",
-      created: now,
-    })),
+    data: KNOWN_MODELS.map((id) => {
+      const limits = modelLimitsFor(id);
+      return {
+        id,
+        object: "model" as const,
+        owned_by: "anthropic",
+        created: now,
+        // Per-model limits so clients can size their context budget.
+        context_length: limits.contextLength,
+        max_output_tokens: limits.maxOutputTokens,
+      };
+    }),
   });
 }
 

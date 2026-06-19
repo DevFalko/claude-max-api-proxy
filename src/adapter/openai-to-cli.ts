@@ -51,6 +51,43 @@ export const KNOWN_MODELS = [
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 
+export interface ModelLimits {
+  /** Input context window in tokens. */
+  contextLength: number;
+  /** Maximum output tokens. */
+  maxOutputTokens: number;
+}
+
+/**
+ * Documented per-model limits, exposed via `/v1/models` so clients (OpenClaw,
+ * etc.) can size their context budget per model. These are the models'
+ * published context windows; the CLI manages compaction within whatever the
+ * subscription actually grants. Edit here to adjust the advertised values.
+ */
+export const MODEL_LIMITS: Record<string, ModelLimits> = {
+  "claude-fable-5": { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+  "claude-opus-4-8": { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+  "claude-opus-4-7": { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+  "claude-opus-4-6": { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+  "claude-sonnet-4-6": { contextLength: 1_000_000, maxOutputTokens: 64_000 },
+  "claude-haiku-4-5": { contextLength: 200_000, maxOutputTokens: 64_000 },
+  // Legacy (still active) — conservative defaults
+  "claude-opus-4-5": { contextLength: 200_000, maxOutputTokens: 64_000 },
+  "claude-sonnet-4-5": { contextLength: 1_000_000, maxOutputTokens: 64_000 },
+  // Aliases → latest of each tier
+  opus: { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+  sonnet: { contextLength: 1_000_000, maxOutputTokens: 64_000 },
+  haiku: { contextLength: 200_000, maxOutputTokens: 64_000 },
+  fable: { contextLength: 1_000_000, maxOutputTokens: 128_000 },
+};
+
+const DEFAULT_LIMITS: ModelLimits = { contextLength: 200_000, maxOutputTokens: 8_192 };
+
+/** Look up a model's advertised limits, falling back to a conservative default. */
+export function modelLimitsFor(model: string): ModelLimits {
+  return MODEL_LIMITS[model] ?? DEFAULT_LIMITS;
+}
+
 /**
  * Resolve the requested model into the value passed to `claude --model`.
  *

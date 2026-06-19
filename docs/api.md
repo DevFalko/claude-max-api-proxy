@@ -25,14 +25,18 @@ value sent by the client is accepted and ignored (auth is handled by the Claude 
 ## `GET /v1/models`
 
 Returns the known model list (see [models.md](models.md)). Any model the CLI
-accepts can still be *used* even if it isn't listed here.
+accepts can still be *used* even if it isn't listed here. Each entry carries
+`context_length` (input window) and `max_output_tokens` so clients can size their
+context budget per model.
 
 ```json
 {
   "object": "list",
   "data": [
-    { "id": "claude-fable-5",   "object": "model", "owned_by": "anthropic", "created": 1750000000 },
-    { "id": "claude-opus-4-8",  "object": "model", "owned_by": "anthropic", "created": 1750000000 }
+    { "id": "claude-fable-5",  "object": "model", "owned_by": "anthropic", "created": 1750000000,
+      "context_length": 1000000, "max_output_tokens": 128000 },
+    { "id": "claude-haiku-4-5", "object": "model", "owned_by": "anthropic", "created": 1750000000,
+      "context_length": 200000, "max_output_tokens": 64000 }
   ]
 }
 ```

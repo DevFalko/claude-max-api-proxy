@@ -108,6 +108,10 @@ export interface OpenAIModel {
   object: "model";
   owned_by: string;
   created?: number;
+  // Per-model limits so clients (OpenClaw, etc.) can size their context budget.
+  // `context_length` is the input context window; `max_output_tokens` the output cap.
+  context_length?: number;
+  max_output_tokens?: number;
 }
 
 export interface OpenAIModelList {
