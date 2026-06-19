@@ -1,7 +1,8 @@
 {
-  "name": "claude-max-api-proxy",
-  "version": "1.0.0",
+  "name": "@devfalko/claude-max-api-proxy",
+  "version": "2.0.0",
   "description": "Use your Claude Max subscription with any OpenAI-compatible client. Wraps Claude Code CLI as an OpenAI-compatible API server.",
+  "publishConfig": { "access": "public" },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +15,7 @@
     "start": "node dist/server/standalone.js",
     "test": "node --test dist/**/*.test.js",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "keywords": [
     "claude",
@@ -28,16 +29,16 @@
     "llm",
     "ai"
   ],
-  "author": "Atal Ashutosh",
+  "author": "Falko Hübenthal",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/atalovesyou/claude-max-api-proxy"
+    "url": "git+https://github.com/DevFalko/claude-max-api-proxy.git"
   },
   "bugs": {
-    "url": "https://github.com/atalovesyou/claude-max-api-proxy/issues"
+    "url": "https://github.com/DevFalko/claude-max-api-proxy/issues"
   },
-  "homepage": "https://github.com/atalovesyou/claude-max-api-proxy#readme",
+  "homepage": "https://github.com/DevFalko/claude-max-api-proxy#readme",
   "dependencies": {
     "express": "^4.21.2",
     "uuid": "^11.0.5"
@@ -60,7 +61,12 @@
     "node": ">=20"
   },
   "files": [
+    "!.claude/**",
     "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.js.map",
+    "!dist/**/*.test.d.ts",
+    "!dist/**/*.test.d.ts.map",
     "docs",
     "README.md",
     "CONTRIBUTING.md"

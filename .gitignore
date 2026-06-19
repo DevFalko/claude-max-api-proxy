@@ -21,6 +21,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.claude/
 
 # Test coverage
 coverage/

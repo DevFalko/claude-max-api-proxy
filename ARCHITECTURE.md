@@ -1,5 +1,7 @@
 # Clawdbot Plugin Architecture Analysis
 
+> Historical research note: this file documents early exploration and is not the source of truth for the current proxy implementation. For the current design, see DESIGN.md and README.md.
+
 Research findings for Task #2.
 
 ## Plugin Registration System

@@ -22,7 +22,9 @@ export interface OpenAIChatRequest {
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
-  user?: string; // Used for session mapping
+  // Optional OpenAI user identifier. Currently passed through without
+  // server-side session mapping.
+  user?: string;
   // Reasoning / extended thinking controls.
   // `reasoning_effort` is the OpenAI-standard knob (low/medium/high; xhigh/max
   // are Claude-specific extras the CLI also accepts). `max_thinking_tokens` is

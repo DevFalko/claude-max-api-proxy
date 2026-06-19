@@ -1,0 +1,11 @@
+chore: prepare v2.0.0 for npm publish
+
+- Rename package to the scoped @devfalko/claude-max-api-proxy and bump to 2.0.0;
+  add publishConfig.access=public and point author/repository/bugs/homepage at
+  the DevFalko fork.
+- Exclude the compiled test files (and .claude) from the published tarball via
+  the `files` field, and make `prepublishOnly` clean before building so stale
+  dist artifacts (e.g. the removed session manager) can never ship.
+- Update the standalone startup hint to a current model id (claude-sonnet-4-6 /
+  the `sonnet` alias); clarify the `user` field comment.
+- Trim stale/oversized design docs.

@@ -1,5 +1,7 @@
 # Claude Code CLI JSON Streaming Protocol
 
+> Historical research note: this file contains exploration notes from early protocol testing. The authoritative behavior for this repository is the current TypeScript implementation in src/types/claude-cli.ts, src/subprocess/manager.ts, and src/server/routes.ts.
+
 Research findings for Task #1.
 
 ## CLI Flags for Programmatic Use
@@ -144,12 +146,14 @@ When using `--input-format stream-json`, send JSON lines to stdin:
 
 **TODO:** Need to verify exact input format with testing.
 
-## Session Management
+## Session Management (Historical Notes)
 
-- Sessions are identified by UUID
-- Use `--session-id <uuid>` to specify
-- Use `--resume <id>` to continue conversation
-- Sessions persist by default; use `--no-session-persistence` to disable
+These notes describe raw CLI capabilities from early exploration.
+
+Current proxy behavior in this repository is stateless per request:
+- The subprocess is started with `--no-session-persistence`
+- OpenAI `user` is not mapped to `--session-id`
+- No server-side session store is maintained
 
 ## Important Notes
 

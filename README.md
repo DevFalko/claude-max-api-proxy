@@ -42,7 +42,7 @@ Your App (OpenClaw, Continue.dev, etc.)
 - **Streaming support** — Real-time token streaming via Server-Sent Events, with reasoning chunks emitted before the answer
 - **OpenClaw integration** — Automatic tool name mapping and system prompt adaptation
 - **Content block handling** — Proper text block separators for multi-block responses
-- **Session management** — Maintains conversation context via session IDs
+- **Stateless by design** — Runs one-shot requests with no proxy-side session persistence
 - **Auto-start service** — Optional LaunchAgent for macOS
 - **Zero configuration** — Uses existing Claude CLI authentication
 - **Secure by design** — Uses `spawn()` to prevent shell injection
@@ -350,8 +350,6 @@ src/
 │   └── cli-to-openai.ts   # CLI response → OpenAI: echoes requested model
 ├── subprocess/
 │   └── manager.ts         # Claude CLI subprocess: --model / --effort, thinking event forwarding
-├── session/
-│   └── manager.ts         # Session ID mapping
 ├── server/
 │   ├── index.ts           # Express server setup
 │   ├── routes.ts          # API route handlers (reasoning_content streaming + non-streaming)
