@@ -190,14 +190,6 @@ export function isThinkingDelta(msg: ClaudeCliMessage): msg is ClaudeCliStreamEv
   );
 }
 
-export function isThinkingBlockStart(msg: ClaudeCliMessage): msg is ClaudeCliStreamEvent {
-  return (
-    isStreamEvent(msg) &&
-    msg.event.type === "content_block_start" &&
-    msg.event.content_block?.type === "thinking"
-  );
-}
-
 export function isToolUseBlockStart(msg: ClaudeCliMessage): msg is ClaudeCliStreamEvent {
   return (
     isStreamEvent(msg) &&

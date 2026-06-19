@@ -121,7 +121,7 @@ export function cliResultToOpenai(
  * actually served the request. We only strip a trailing date snapshot suffix
  * (e.g. "claude-sonnet-4-6-20250929" -> "claude-sonnet-4-6").
  */
-function normalizeModelName(model: string | undefined): string {
+export function normalizeModelName(model: string | undefined): string {
   if (!model) return "claude-opus-4-8";
   return model.replace(/-\d{8}$/, "");
 }

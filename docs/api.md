@@ -51,8 +51,8 @@ context budget per model.
 | `messages` | array | yes | OpenAI messages. `system`/`user`/`assistant` roles supported; `content` may be a string or an array of `{type:"text"\|"input_text", text}` blocks. |
 | `stream` | boolean | no | `true` → Server-Sent Events. Default `false`. |
 | `reasoning_effort` | string | no | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Enables extended thinking. See [reasoning.md](reasoning.md). |
-| `max_thinking_tokens` | number | no | `> 0` enables thinking; `0` forces it off. Overrides/augments `reasoning_effort`. See [reasoning.md](reasoning.md). |
-| `user` | string | no | Mapped to the CLI session ID. |
+| `max_thinking_tokens` | number | no | On/off only: `> 0` enables thinking (value ignored), `0` forces it off. Overrides `reasoning_effort`. See [reasoning.md](reasoning.md). |
+| `user` | string | no | Accepted (OpenAI end-user identifier); currently unused. |
 
 Other OpenAI sampling fields (`temperature`, `top_p`, `max_tokens`, …) are accepted
 but currently ignored — the CLI controls generation.

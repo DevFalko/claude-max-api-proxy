@@ -29,12 +29,12 @@ extras beyond the OpenAI standard `low`/`medium`/`high`.)
 
 ### `max_thinking_tokens`
 
-An optional explicit switch:
+An optional explicit **on/off** switch — the CLI has no numeric thinking budget,
+so the *value* is not honored:
 
 - `max_thinking_tokens: 0` → thinking **off** (overrides `reasoning_effort`).
 - `max_thinking_tokens: N` (N > 0) without `reasoning_effort` → thinking **on** at
-  `high` effort. The number itself is passed to the CLI as a forward-compatible
-  hint but **does not cap depth** on current CLI versions (see below).
+  `high` effort (the magnitude is ignored).
 
 ## Output
 
@@ -45,6 +45,13 @@ The thinking text is delivered separately from the answer:
   the `content` chunks.
 
 When thinking is off, `reasoning_content` is absent entirely.
+
+Only the thinking that **precedes the first visible-content token** is surfaced.
+Claude Code is agentic, so a single run can include internal tool-loop and
+sub-agent (e.g. Haiku) turns that each emit their own thinking; that internal
+reasoning is intentionally **not** included in `reasoning_content` (it isn't the
+final answer's chain-of-thought), which also guarantees `reasoning_content`
+always precedes `content`.
 
 ## Off by default
 

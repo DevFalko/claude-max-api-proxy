@@ -29,14 +29,11 @@ import type { ClaudeModel, ClaudeEffort } from "../adapter/openai-to-cli.js";
 
 export interface SubprocessOptions {
   model: ClaudeModel;
-  sessionId?: string;
   cwd?: string;
   timeout?: number;
   // Reasoning config. `effort` (passed as `--effort`) enables/deepens thinking;
   // undefined → thinking hard-disabled via MAX_THINKING_TOKENS=0.
-  // `thinkingBudget` is a forward-compatible env hint (ignored by current CLI).
   effort?: ClaudeEffort;
-  thinkingBudget?: number;
 }
 
 export interface SubprocessEvents {
@@ -118,14 +115,9 @@ export class ClaudeSubprocess extends EventEmitter {
           Object.entries(process.env).filter(([k]) => k !== "CLAUDECODE")
         );
         if (options.effort) {
-          // Thinking on. A positive budget is a forward-compatible hint the
-          // current CLI ignores; clear any inherited MAX_THINKING_TOKENS=0 that
-          // would otherwise force thinking off.
-          if (options.thinkingBudget && options.thinkingBudget > 0) {
-            childEnv.MAX_THINKING_TOKENS = String(options.thinkingBudget);
-          } else {
-            delete childEnv.MAX_THINKING_TOKENS;
-          }
+          // Thinking on via --effort. Clear any inherited MAX_THINKING_TOKENS=0
+          // that would otherwise force thinking off.
+          delete childEnv.MAX_THINKING_TOKENS;
         } else {
           // No reasoning requested → deterministically disable thinking.
           childEnv.MAX_THINKING_TOKENS = "0";
@@ -236,10 +228,6 @@ export class ClaudeSubprocess extends EventEmitter {
     // (further enforced by MAX_THINKING_TOKENS=0 in the spawn env).
     if (options.effort) {
       args.push("--effort", options.effort);
-    }
-
-    if (options.sessionId) {
-      args.push("--session-id", options.sessionId);
     }
 
     return args;

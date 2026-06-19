@@ -15,14 +15,10 @@ const ALLOWED_EFFORTS: ClaudeEffort[] = ["low", "medium", "high", "xhigh", "max"
 export interface CliInput {
   prompt: string;
   model: ClaudeModel;
-  sessionId?: string;
-  // Reasoning / extended thinking. In Claude CLI 2.1.x the `--effort` flag
-  // enables and deepens thinking; MAX_THINKING_TOKENS=0 is the only reliable
-  // hard-off switch (a positive value does NOT cap depth — it's a no-op the
-  // current CLI ignores, kept only as a forward-compatible hint).
-  // effort === undefined → thinking disabled.
+  // Reasoning / extended thinking. The `--effort` flag enables/deepens thinking;
+  // MAX_THINKING_TOKENS=0 (set in the subprocess env) is the only reliable
+  // hard-off switch. effort === undefined → thinking disabled.
   effort?: ClaudeEffort;
-  thinkingBudget?: number;
 }
 
 /**
@@ -102,36 +98,32 @@ export function extractModel(model: string): ClaudeModel {
 
 export interface ResolvedThinking {
   effort?: ClaudeEffort;
-  thinkingBudget?: number;
 }
 
 /**
  * Resolve the reasoning configuration from an OpenAI request.
  *
  * - `reasoning_effort` (low/medium/high/xhigh/max) maps directly to `--effort`.
- * - `max_thinking_tokens > 0` without an effort level turns thinking on (at
- *   "high"); the number is carried as a forward-compatible env hint only.
+ * - `max_thinking_tokens > 0` without an effort level just turns thinking on
+ *   (at "high"). The CLI has no numeric thinking budget — the value itself is
+ *   not honored — so max_thinking_tokens is effectively an on/off switch.
  * - `max_thinking_tokens === 0` (or negative) forces thinking off, even if an
  *   effort level was also supplied.
  * - Nothing set → thinking off.
  */
 export function resolveThinking(request: OpenAIChatRequest): ResolvedThinking {
   const mtt = request.max_thinking_tokens;
-  const explicitlyOff = typeof mtt === "number" && mtt <= 0;
-  if (explicitlyOff) return {};
-
-  const budget = typeof mtt === "number" && mtt > 0 ? Math.floor(mtt) : undefined;
+  if (typeof mtt === "number" && mtt <= 0) return {};
 
   if (request.reasoning_effort) {
     const effort = (ALLOWED_EFFORTS as string[]).includes(request.reasoning_effort)
       ? (request.reasoning_effort as ClaudeEffort)
       : "high";
-    return { effort, thinkingBudget: budget };
+    return { effort };
   }
 
-  if (budget !== undefined) {
-    // Budget provided without an effort level → enable thinking at high depth.
-    return { effort: "high", thinkingBudget: budget };
+  if (typeof mtt === "number" && mtt > 0) {
+    return { effort: "high" };
   }
 
   return {};
@@ -228,8 +220,6 @@ export function openaiToCli(request: OpenAIChatRequest): CliInput {
   return {
     prompt: messagesToPrompt(request.messages),
     model: extractModel(request.model),
-    sessionId: request.user, // Use OpenAI's user field for session mapping
     effort: thinking.effort,
-    thinkingBudget: thinking.thinkingBudget,
   };
 }

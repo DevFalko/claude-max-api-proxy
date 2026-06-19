@@ -11,6 +11,7 @@ import { openaiToCli, KNOWN_MODELS, modelLimitsFor } from "../adapter/openai-to-
 import {
   cliResultToOpenai,
   createDoneChunk,
+  normalizeModelName,
 } from "../adapter/cli-to-openai.js";
 import type { OpenAIChatRequest, OpenAIToolCall } from "../types/openai.js";
 import type { ClaudeCliResult, ClaudeCliStreamEvent } from "../types/claude-cli.js";
@@ -103,9 +104,11 @@ async function handleStreamingResponse(
 
   return new Promise<void>((resolve, reject) => {
     let isFirst = true;
-    // Pin the streamed model to the one the client requested — don't derive it
-    // from assistant events, which may carry an auxiliary internal model.
-    const lastModel = cliInput.model;
+    // Pin the streamed model to the (normalized) requested model — don't derive
+    // it from assistant events, which may carry an auxiliary internal model.
+    // Normalizing here keeps every chunk consistent with the final done chunk
+    // (which also normalizes) and with the non-streaming response.
+    const lastModel = normalizeModelName(cliInput.model);
     let isComplete = false;
     let hasEmittedText = false;
     let toolCallIndex = 0;
@@ -142,12 +145,14 @@ async function handleStreamingResponse(
     });
 
     // Handle streaming extended-thinking deltas → reasoning_content.
-    // Thinking blocks arrive before the visible answer, so these chunks
-    // naturally precede the content chunks.
+    // Only forward thinking that precedes the first visible-content token:
+    // reasoning_content must precede content (clients close the reasoning panel
+    // on the first content token), and later thinking belongs to internal
+    // tool-loop / sub-agent turns rather than the final answer's chain-of-thought.
     subprocess.on("thinking_delta", (event: ClaudeCliStreamEvent) => {
       const delta = event.event.delta;
       const text = (delta?.type === "thinking_delta" && delta.thinking) || "";
-      if (text && !res.writableEnded) {
+      if (text && !hasEmittedText && !res.writableEnded) {
         const chunk = {
           id: `chatcmpl-${requestId}`,
           object: "chat.completion.chunk",
@@ -314,9 +319,7 @@ async function handleStreamingResponse(
     // Start the subprocess
     subprocess.start(cliInput.prompt, {
       model: cliInput.model,
-      sessionId: cliInput.sessionId,
       effort: cliInput.effort,
-      thinkingBudget: cliInput.thinkingBudget,
     }).catch((err) => {
       console.error("[Streaming] Subprocess start error:", err);
       reject(err);
@@ -336,9 +339,18 @@ async function handleNonStreamingResponse(
   return new Promise((resolve) => {
     let finalResult: ClaudeCliResult | null = null;
     let reasoningContent = "";
+    let contentStarted = false;
 
-    // Accumulate extended-thinking text to return as message.reasoning_content
+    // Once the visible answer starts, stop capturing thinking: later thinking
+    // belongs to internal tool-loop / sub-agent turns, not the final answer's
+    // chain-of-thought, and would otherwise be conflated into reasoning_content.
+    subprocess.on("content_delta", () => {
+      contentStarted = true;
+    });
+
+    // Accumulate the pre-answer extended-thinking text → message.reasoning_content
     subprocess.on("thinking_delta", (event: ClaudeCliStreamEvent) => {
+      if (contentStarted) return;
       const delta = event.event.delta;
       if (delta?.type === "thinking_delta" && delta.thinking) {
         reasoningContent += delta.thinking;
@@ -368,17 +380,29 @@ async function handleNonStreamingResponse(
 
     subprocess.on("error", (error: Error) => {
       console.error("[NonStreaming] Error:", error.message);
-      res.status(500).json({
-        error: {
-          message: error.message,
-          type: "server_error",
-          code: null,
-        },
-      });
+      // Kill so a late buffered result can't trigger a second response, and
+      // guard against double-send in case a response was already sent.
+      subprocess.kill();
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: {
+            message: error.message,
+            type: "server_error",
+            code: null,
+          },
+        });
+      }
       resolve();
     });
 
     subprocess.on("close", (code: number | null) => {
+      // Guard the whole handler: the error handler above may have already
+      // responded (e.g. on timeout), and a buffer flush on close can still set
+      // finalResult — without this guard res.json would throw ERR_HTTP_HEADERS_SENT.
+      if (res.headersSent) {
+        resolve();
+        return;
+      }
       if (finalResult) {
         res.json(
           cliResultToOpenai(
@@ -389,7 +413,7 @@ async function handleNonStreamingResponse(
             cliInput.model
           )
         );
-      } else if (!res.headersSent) {
+      } else {
         res.status(500).json({
           error: {
             message: `Claude CLI exited with code ${code} without response`,
@@ -405,9 +429,7 @@ async function handleNonStreamingResponse(
     subprocess
       .start(cliInput.prompt, {
         model: cliInput.model,
-        sessionId: cliInput.sessionId,
         effort: cliInput.effort,
-        thinkingBudget: cliInput.thinkingBudget,
       })
       .catch((error) => {
         res.status(500).json({
