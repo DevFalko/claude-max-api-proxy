@@ -2,46 +2,8 @@
  * Converts Claude CLI output to OpenAI-compatible response format
  */
 
-import type { ClaudeCliAssistant, ClaudeCliResult } from "../types/claude-cli.js";
+import type { ClaudeCliResult } from "../types/claude-cli.js";
 import type { OpenAIChatResponse, OpenAIChatChunk, OpenAIToolCall } from "../types/openai.js";
-
-/**
- * Extract text content from Claude CLI assistant message
- */
-export function extractTextContent(message: ClaudeCliAssistant): string {
-  return message.message.content
-    .filter((c) => c.type === "text")
-    .map((c) => c.text)
-    .join("\n\n");
-}
-
-/**
- * Convert Claude CLI assistant message to OpenAI streaming chunk
- */
-export function cliToOpenaiChunk(
-  message: ClaudeCliAssistant,
-  requestId: string,
-  isFirst: boolean = false
-): OpenAIChatChunk {
-  const text = extractTextContent(message);
-
-  return {
-    id: `chatcmpl-${requestId}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: normalizeModelName(message.message.model),
-    choices: [
-      {
-        index: 0,
-        delta: {
-          role: isFirst ? "assistant" : undefined,
-          content: text,
-        },
-        finish_reason: message.message.stop_reason ? "stop" : null,
-      },
-    ],
-  };
-}
 
 /**
  * Create a final "done" chunk for streaming
@@ -82,7 +44,9 @@ export function cliResultToOpenai(
 
   const message: OpenAIChatResponse["choices"][0]["message"] = {
     role: "assistant",
-    content: result.result,
+    // Coalesce: result.result is typed string but flows in from untyped CLI JSON;
+    // never emit `content: undefined` (which JSON.stringify drops, breaking strict clients).
+    content: result.result ?? "",
   };
 
   if (reasoningContent) {
